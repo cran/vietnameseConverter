@@ -1,29 +1,31 @@
 #' @title
 #' Convert characters from legacy Vietnamese encodings to UTF-8 encoding
 #'
-#' @param x data.frame or character vector
+#' @param x data.frame, sf object, or character vector
 #' @param from Text encoding of input x
 #' @param to Text encoding of output
-#' @param diacritics logical. Preserve diacritics (TRUE) or not (FALSE)
+#' @param diacritics logical. Preserve diacritics (TRUE) or not (FALSE)?
 # @param ... Additional arguments to gsubfn()
 #'
 #' @details
 #' Many characters in legacy Vietnamese encodings (e.g. TCVN3, VPS, VISCII)
 #' are not read correctly in R, particularly those with diacritics (accents). The particular
-#' encodings don't seem to be supported by R, at least on many locales. Reading them as if they have UTF-8
-#' encoding results in wrong characters being printed and garbled text (Mojibake).
+#' encodings don't seem to be supported by R, at least on many locales. When R reads them as if they have UTF-8
+#' encoding, it will result in wrong characters being printed and garbled text (Mojibake - see vignette and examples below).
 #'
 #' This functions converts character vectors to from various Vietnamese legacy encodings to readable
-#' Unicode characters in UTF-8 encoding. By default the function attempts the conversion from TCVN3 to UTF-8
+#' Unicode characters in UTF-8 encoding. By default the function attempts the conversion from TCVN3 to Unicode
 #' while preserving the diacritics, but also supports other Vietnamese encodings  (TCVN3, VPS, VISCII - via argument \code{from}).
 #' Currently VNI and VNU are not supported.
+#'
+#' It works on data frames, spatial objects (from the sf package), and character vectors.
 #'
 #'  \code{diacritics = TRUE} will return characters with their diacritics. With \code{diacritics = FALSE},
 #'  the output will be ASCII letters without diacritics. Upper/lower case will be preserved regardless.
 #'
-#' The internal search and replace is performed by the \code{\link[gsubfn]{gsubfn}} function from the \pkg{gsubfn} package. It performs a simple character replacements to fix the text.
+#' The internal search and replace is performed by the \code{\link[gsubfn]{gsubfn}} function from the \pkg{gsubfn} package. It performs simple character replacements to fix the text.
 #'
-#' Currently the function converts from the Vietnamese encodings to UTF-8, not vice versa. Please contact the maintainer
+#' Currently the function converts from the Vietnamese encodings to Unicode, not vice versa. Please contact the maintainer
 #' if the conversion from Unicode to Vietnamese encodings would be relevant for you.
 #'
 #' The character conversion table was adapted from \url{http://vietunicode.sourceforge.net/charset/}.
@@ -34,8 +36,12 @@
 #' @return character string or data frame (depending on x)
 #'
 #' @export
+#' @importFrom methods is
 #' @importFrom utf8 as_utf8
 #' @importFrom gsubfn gsubfn
+#' @importFrom sf st_geometry
+#' @importFrom sf st_drop_geometry
+#' @importFrom sf st_set_geometry
 #'
 #'
 #' @examples
@@ -71,14 +77,39 @@
 #'    decodeVN(vn_samples$TCVN3, diacritics = FALSE)   # TCVN3 -> Unicode (ASCII characters only)
 #'    decodeVN(vn_samples$VISCII, from = "VISCII")     # VISCII -> Unicode
 #'
+#'
+#'    # Demonstration for sf object
+#'
+#'    # create sf object (just for demonstration)
+#'    require(sf)
+#'    df_geom <- st_sfc(st_point(c(3,4)), st_point(c(10,11)), st_point(c(15,13)))
+#'    df_spatial <- st_set_geometry(df, df_geom)
+#'
+#'    # convert Vietnamese characters
+#'    df_spatial_decode <- decodeVN(df_spatial)
+#'
+#'    df_spatial_decode
+#'    df_spatial_decode$name
+#'
+#'
 decodeVN <- function(x,
-                     from = c("TCVN3", "VISCII", "VPS", "Unicode"),     #  "VNI",  "VNU",
+                     from = c("TCVN3", "VISCII", "VPS", "Unicode"),  # "VNI",  "VNU",
                      to =  c("Unicode", "TCVN3", "VISCII", "VPS"),   # "VNI"
                      diacritics = TRUE
                      ) {
 
 
-  if(inherits(x, "data.frame")) x <- as.data.frame(x)    # for tibbles etc
+  # if spatial objects, temporarily store spatial information
+  if(is(x, "sf")) {
+    spatial <- TRUE
+    x_geometry <- st_geometry(x)  # temporarily store geometry column
+    x          <- st_drop_geometry(x)      # remove geometry column
+  } else {
+    spatial <- FALSE
+  }
+
+  if(inherits(x, "data.frame")) x <- as.data.frame(x)    # for tibbles, sf, data.table
+
   if(!class(x) %in% c("data.frame", "character")) stop("x must be a character vector or data.frame")
   enc_table <- loadEncodingTableVN(version = 2)
 
@@ -97,14 +128,6 @@ decodeVN <- function(x,
   }
   names(tmp) <- enc_table[, from]
 
-  #tmp_split <- split(tmp, nchar(names(tmp)))
-
-
-  #tmp <- tmp[which(tmp != names(tmp))]
-
-  #names(tmp) <- sapply(enc_table[, from], FUN = function(x) as.character(Unicode::as.u_char(utf8ToInt(x))))
-  #names(tmp) <- gsub("U+", "\u", names(tmp) )
-  #paste0("[\u", as.hexmode(sapply(enc_table[, from], utf8ToInt)), "]")
 
   if(is.data.frame(x)) {
     char_cols <- which(sapply(x, typeof) %in% "character")
@@ -119,7 +142,10 @@ decodeVN <- function(x,
       } else {
         out[,i] <- gsubfn(".", replacement = tmp, x = out[ ,i], perl = perl)
       }
-      #out[,i] <- as_utf8(out[,i])
+    }
+
+    if(spatial) {
+      out <- st_set_geometry(out, x_geometry) # assign geometry column again
     }
   }
 
@@ -142,15 +168,6 @@ decodeVN <- function(x,
     } else {
       out <- gsubfn(".", replacement = tmp, x = x, perl = T)
     }
-
-
-    # if(length(tmp_split) == 2) {
-    #   out <- gsubfn::gsubfn(".*", replacement = tmp_split[[2]], x = x, fixed = F)
-    # }
-    # out <- as_utf8(out)
-  #  cbind(x, out)[out != x,]
-    #out <- gsubfn::gsubfn(".", replacement = tmp_split[[2]], x = out, fixed = F)
-
   }
 
   return(out)
